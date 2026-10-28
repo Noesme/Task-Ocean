@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Ocean</title>
+    <!-- Google Fonts: Plus Jakarta Sans -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+                    },
+                    colors: {
+                        oceanBg: '#86d7f7',
+                        cardBg: '#d7f7ff',
+                        navyText: '#023859',
+                        navyDark: '#012942',
+                        navyCompleted: '#034a75'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #86d7f7;
+            color: #023859;
+            font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            user-select: none;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #d7f7ff;
+            border-radius: 8px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #023859;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+
+    <!-- APP CONTAINER -->
+    <div id="app" class="w-full max-w-4xl mx-auto flex flex-col items-center">
+        <!-- Main dynamic view will render here -->
+    </div>
+
+    <!-- MODAL CONTAINER FOR INPUTS/DIALOGS -->
+    <div id="modal-backdrop" class="fixed inset-0 bg-black/40 backdrop-blur-sm hidden flex items-center justify-center z-50 p-4">
+        <div id="modal-box" class="bg-cardBg border-2 border-navyText rounded-3xl p-6 w-full max-w-md shadow-2xl relative">
+            <h3 id="modal-title" class="text-xl font-bold text-navyText mb-4 text-center"></h3>
+            <div id="modal-content" class="space-y-4"></div>
+            <div class="mt-6 flex justify-end gap-3">
+                <button id="modal-cancel" class="px-4 py-2 rounded-xl text-navyText border border-navyText hover:bg-navyText/10 transition font-medium">Avbryt</button>
+                <button id="modal-confirm" class="px-5 py-2 rounded-xl bg-navyText text-white hover:bg-navyDark transition font-semibold">Spara</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- INITIAL DATA STRUCTURE & STATE ---
+        const DEFAULT_USERS = [
+            { id: 'u1', name: 'User 1' },
+            { id: 'u2', name: 'User 2' }
+        ];
+
+        const DEFAULT_LISTS = [
+            {
+                id: 'l1',
+                name: 'Min lista',
+                ownerId: 'u1',
+                sharedUsers: ['u1', 'u2'],
+                tasks: [
+                    { id: 't1', text: 'Vattna blommorna', addedBy: 'u1', completed: false },
+                    { id: 't2', text: 'Klipp gräset', addedBy: 'u1', completed: false },
+                    { id: 't3', text: 'Mata katterna', addedBy: 'u2', completed: true },
+                    { id: 't4', text: 'Mata fåglarna', addedBy: 'u1', completed: true }
+                ]
+            },
+            {
+                id: 'l2',
+                name: 'Matlagning',
+                ownerId: 'u1',
+                sharedUsers: ['u1'],
+                tasks: []
+            },
+            {
+                id: 'l3',
+                name: 'Matlagning',
+                ownerId: 'u2',
+                sharedUsers: ['u2'],
+                tasks: []
+            }
+        ];
+
+        let state = {
+            users: JSON.parse(localStorage.getItem('task_ocean_users')) || DEFAULT_USERS,
+            lists: JSON.parse(localStorage.getItem('task_ocean_lists')) || DEFAULT_LISTS,
+            currentUser: localStorage.getItem('task_ocean_current_user') || 'u1',
+            activeListId: null // null = lists view, string = detailed list view
+        };
+
+        // --- INVITE LINK HANDLER ---
+        function checkInviteUrl() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const inviteListId = urlParams.get('invite');
+
+            if (inviteListId) {
+                const list = state.lists.find(l => l.id === inviteListId);
+                if (list) {
+                    // Make sure current user is included in sharedUsers
+                    if (!list.sharedUsers.includes(state.currentUser)) {
+                        list.sharedUsers.push(state.currentUser);
+                        saveState();
+                    }
+                    // Auto open list
+                    state.activeListId = list.id;
+                    // Clean URL parameter without page reload
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                }
+            }
+        }
+
+        function saveState() {
+            localStorage.setItem('task_ocean_users', JSON.stringify(state.users));
+            localStorage.setItem('task_ocean_lists', JSON.stringify(state.lists));
+            localStorage.setItem('task_ocean_current_user', state.currentUser);
+        }
+
+        function getCurrentUserObj() {
+            return state.users.find(u => u.id === state.currentUser) || state.users[0];
+        }
+
+        function getUserName(userId) {
+            const user = state.users.find(u => u.id === userId);
+            return user ? user.name : 'Okänd';
+        }
+
+        // --- RENDER FUNCTIONS ---
+        function render() {
+            const app = document.getElementById('app');
+            app.innerHTML = '';
+
+            if (state.activeListId === null) {
+                renderListsView(app);
+            } else {
+                renderSingleListView(app, state.activeListId);
+            }
+            lucide.createIcons();
+        }
+
+        // --- 1. LISTS OVERVIEW PAGE ("Listor") ---
+        function renderListsView(container) {
+            const currentUser = getCurrentUserObj();
+
+            const html = `
+                <!-- LOGO HEADER -->
+                <div class="flex flex-col items-center mb-8">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-10 h-10 text-navyText" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+                            <!-- Segel 1 (Vänster) -->
+                            <path d="M21 8 L10 28 L21 28 Z" fill="currentColor" fill-opacity="0.2" />
+                            <!-- Segel 2 (Höger) -->
+                            <path d="M25 4 L38 28 L25 28 Z" fill="currentColor" fill-opacity="0.35" />
+                            <!-- Båtsskrov -->
+                            <path d="M8 32 C14 39 34 39 40 32 L36 37 H12 Z" fill="currentColor" />
+                            <!-- Vågor under båten -->
+                            <path d="M4 41 C8 39 12 43 16 41 C20 39 24 43 28 41 C32 39 36 43 40 41 C44 39 46 41 46 41" stroke-width="3" />
+                        </svg>
+                        <h1 class="text-3xl md:text-4xl font-extrabold text-navyText tracking-wide border-b-2 border-navyText pb-1">
+                            Task Ocean
+                        </h1>
+                    </div>
+                </div>
+
+                <!-- PAGE TITLE & USER SWITCHER -->
+                <div class="w-full max-w-2xl flex items-end justify-between mb-3 px-2">
+                    <h2 class="text-2xl font-bold text-navyText border-b-2 border-navyText pb-0.5 inline-block">
+                        Listor
+                    </h2>
+
+                    <!-- USER DROPDOWN / SELECTOR -->
+                    <div class="flex items-center gap-1.5 cursor-pointer group relative" onclick="openUserSwitchModal()">
+                        <div class="flex flex-col items-center">
+                        <i data-lucide="user" class="w-7 h-7 text-navyText fill-navyText group-hover:scale-110 transition-transform"></i>
+                        <div class="flex items-center gap-1 text-xs font-bold text-navyText">
+                            <span>${currentUser.name}</span>
+                            <i data-lucide="pencil" class="w-3.5 h-3.5 text-navyText"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- MAIN CARD CONTAINER -->
+                <div class="w-full max-w-2xl bg-cardBg rounded-3xl p-6 shadow-sm border border-navyText/10 min-h-[220px] flex flex-col justify-between">
+                    ${state.lists.length > 0 ? `
+                        <!-- LIST TABLE -->
+                        <div class="w-full overflow-x-auto">
+                            <table class="w-full border-separate border-spacing-y-2.5 text-left">
+                                <thead>
+                                    <tr class="text-navyText font-bold text-sm">
+                                        <th class="pb-1 pl-3 font-semibold">Namn</th>
+                                        <th class="pb-1 text-center font-semibold">Ägs av</th>
+                                        <th class="pb-1 text-right pr-3 font-semibold">Ta bort</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${state.lists.map(list => `
+                                        <tr class="group hover:bg-white/40 transition rounded-xl">
+                                            <td class="p-3 border-y border-l border-navyText rounded-l-xl bg-cardBg cursor-pointer" onclick="openTodoList('${list.id}')">
+                                                <span class="font-bold text-navyText underline decoration-2 underline-offset-4 text-base md:text-lg hover:opacity-80">
+                                                    ${escapeHtml(list.name)}
+                                                </span>
+                                            </td>
+                                            <td class="p-3 border-y border-navyText bg-cardBg cursor-pointer" onclick="openTodoList('${list.id}')">
+                                                <div class="flex items-center justify-center gap-1.5 text-navyText font-bold text-sm">
+                                                    <i data-lucide="user" class="w-4 h-4 fill-navyText"></i>
+                                                    <span>${escapeHtml(getUserName(list.ownerId))}</span>
+                                                </div>
+                                            </td>
+                                            <td class="p-3 border-y border-r border-navyText rounded-r-xl bg-cardBg text-right">
+                                                <button onclick="deleteList('${list.id}', event)" class="text-navyText hover:text-red-600 transition p-1 inline-flex items-center justify-center">
+                                                    <i data-lucide="x-circle" class="w-6 h-6 stroke-[1.75]"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    ` : ''}
+
+                    <!-- CREATE NEW LIST BUTTON -->
+                    <div class="flex flex-col items-center justify-center my-6 ${state.lists.length === 0 ? 'py-8' : ''}">
+                        <button onclick="openCreateListModal()" class="flex flex-col items-center text-navyText group hover:opacity-80 transition">
+                            <div class="w-12 h-12 rounded-full border-2 border-navyText flex items-center justify-center mb-1 group-hover:scale-105 transition-transform">
+                                <i data-lucide="plus" class="w-7 h-7 stroke-[2.5]"></i>
+                            </div>
+                            <span class="font-bold text-navyText text-sm">Skapa ny lista</span>
+                        </button>
+                    </div>
+                </div>
+            `;
+            container.innerHTML = html;
+        }
+
+        // --- 2. TASK DETAIL PAGE ("Min lista") ---
+        function renderSingleListView(container, listId) {
+            const list = state.lists.find(l => l.id === listId);
+            if (!list) {
+                state.activeListId = null;
+                render();
+                return;
+            }
+
+            // Calculate progress
+            const totalTasks = list.tasks.length;
+            const completedTasks = list.tasks.filter(t => t.completed).length;
+            const progressPercent = totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
+
+            // Get shared users
+            const participants = (list.sharedUsers || [list.ownerId]).map(uid => state.users.find(u => u.id === uid)).filter(Boolean);
+
+            const html = `
+                <!-- LOGO HEADER -->
+                <div class="flex flex-col items-center mb-6">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-10 h-10 text-navyText" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+                            <!-- Segel 1 (Vänster) -->
+                            <path d="M21 8 L10 28 L21 28 Z" fill="currentColor" fill-opacity="0.2" />
+                            <!-- Segel 2 (Höger) -->
+                            <path d="M25 4 L38 28 L25 28 Z" fill="currentColor" fill-opacity="0.35" />
+                            <!-- Båtsskrov -->
+                            <path d="M8 32 C14 39 34 39 40 32 L36 37 H12 Z" fill="currentColor" />
+                            <!-- Vågor under båten -->
+                            <path d="M4 41 C8 39 12 43 16 41 C20 39 24 43 28 41 C32 39 36 43 40 41 C44 39 46 41 46 41" stroke-width="3" />
+                        </svg>
+                        <h1 class="text-3xl md:text-4xl font-extrabold text-navyText tracking-wide border-b-2 border-navyText pb-1">
+                            Task Ocean
+                        </h1>
+                    </div>
+                </div>
+
+                <!-- TOP BAR: LIST NAME & PARTICIPATING USERS -->
+                <div class="w-full max-w-2xl flex items-end justify-between mb-3 px-2">
+                    <!-- EDITABLE LIST NAME -->
+                    <div class="flex items-center gap-2 cursor-pointer group" onclick="openEditListTitleModal('${list.id}')">
+                        <h2 class="text-2xl font-bold text-navyText border-b-2 border-navyText pb-0.5">
+                            ${escapeHtml(list.name)}
+                        </h2>
+                        <i data-lucide="pencil" class="w-4 h-4 text-navyText group-hover:scale-110 transition-transform mb-1"></i>
+                    </div>
+
+                    <!-- PARTICIPATING USERS & ADD USER BUTTON -->
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center gap-2">
+                            ${participants.map(u => `
+                                <div class="flex flex-col items-center text-xs font-bold text-navyText">
+                                    <i data-lucide="user" class="w-6 h-6 fill-navyText"></i>
+                                    <span>${escapeHtml(u.name)}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <button onclick="openInviteUserModal('${list.id}')" title="Bjud in / lägg till användare" class="text-navyText hover:scale-110 transition-transform p-1">
+                            <i data-lucide="user-plus" class="w-6 h-6 stroke-[2.2]"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- MAIN TASK CARD -->
+                <div class="w-full max-w-2xl bg-cardBg rounded-3xl p-6 shadow-sm border border-navyText/10 min-h-[300px] flex flex-col justify-between">
+                    <div>
+                        <!-- TASK TABLE HEADERS -->
+                        <div class="grid grid-cols-12 text-navyText font-bold text-sm px-3 mb-2">
+                            <div class="col-span-6 font-semibold">Uppgifter</div>
+                            <div class="col-span-3 text-center font-semibold">Tillagd av</div>
+                            <div class="col-span-1 text-center font-semibold">Ändra</div>
+                            <div class="col-span-2 text-right font-semibold">Ta bort</div>
+                        </div>
+
+                        <!-- TASKS LIST -->
+                        <div class="space-y-2.5">
+                            ${list.tasks.map(task => `
+                                <div class="grid grid-cols-12 items-center rounded-xl border border-navyText transition-colors ${task.completed ? 'bg-navyCompleted text-white' : 'bg-cardBg text-navyText'} px-3 py-2.5">
+                                    
+                                    <!-- CHECKBOX & TASK TEXT -->
+                                    <div class="col-span-6 flex items-center gap-3 overflow-hidden pr-2">
+                                        <button onclick="toggleTask('${list.id}', '${task.id}')" class="flex-shrink-0 cursor-pointer focus:outline-none">
+                                            ${task.completed ? `
+                                                <div class="w-6 h-6 rounded-md border-2 border-white flex items-center justify-center bg-white/20">
+                                                    <i data-lucide="star" class="w-4 h-4 text-white fill-white"></i>
+                                                </div>
+                                            ` : `
+                                                <div class="w-6 h-6 rounded-md border-2 border-navyText bg-transparent"></div>
+                                            `}
+                                        </button>
+                                        <span class="font-bold text-base truncate ${task.completed ? 'text-white' : 'text-navyText'}">
+                                            ${escapeHtml(task.text)}
+                                        </span>
+                                    </div>
+
+                                    <!-- ADDED BY -->
+                                    <div class="col-span-3 flex items-center justify-center gap-1.5 font-bold text-xs md:text-sm">
+                                        <i data-lucide="user" class="w-4 h-4 ${task.completed ? 'text-white fill-white' : 'text-navyText fill-navyText'}"></i>
+                                        <span class="truncate">${escapeHtml(getUserName(task.addedBy))}</span>
+                                    </div>
+
+                                    <!-- EDIT -->
+                                    <div class="col-span-1 flex justify-center">
+                                        <button onclick="openEditTaskModal('${list.id}', '${task.id}', '${escapeHtml(task.text)}')" class="hover:scale-110 transition-transform ${task.completed ? 'text-white' : 'text-navyText'}">
+                                            <i data-lucide="pencil" class="w-5 h-5"></i>
+                                        </button>
+                                    </div>
+
+                                    <!-- DELETE -->
+                                    <div class="col-span-2 flex justify-end">
+                                        <button onclick="deleteTask('${list.id}', '${task.id}')" class="hover:opacity-80 transition ${task.completed ? 'text-white' : 'text-navyText'}">
+                                            <i data-lucide="x-circle" class="w-6 h-6 stroke-[1.75]"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <!-- CREATE NEW TASK BUTTON -->
+                    <div class="flex flex-col items-center justify-center mt-6">
+                        <button onclick="openCreateTaskModal('${list.id}')" class="flex flex-col items-center text-navyText group hover:opacity-80 transition">
+                            <div class="w-12 h-12 rounded-full border-2 border-navyText flex items-center justify-center mb-1 group-hover:scale-105 transition-transform">
+                                <i data-lucide="plus" class="w-7 h-7 stroke-[2.5]"></i>
+                            </div>
+                            <span class="font-bold text-navyText text-sm">Skapa ny uppgift</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- FOOTER SECTION: PROGRESS BAR & BACK BUTTON -->
+                <div class="w-full max-w-2xl mt-4 flex items-center justify-between relative px-2">
+                    <!-- CENTERED PROGRESS BAR CARD -->
+                    <div class="mx-auto bg-cardBg border border-navyText/20 rounded-2xl p-3 px-6 text-center w-full max-w-xs shadow-sm">
+                        <div class="text-xs font-bold text-navyText mb-1">Avklarade uppgifter</div>
+                        <div class="w-full bg-transparent border-2 border-navyText h-5 rounded-full overflow-hidden p-0.5">
+                            <div class="bg-navyCompleted h-full rounded-full transition-all duration-300" style="width: ${progressPercent}%;"></div>
+                        </div>
+                        <div class="text-xs font-bold text-navyText mt-1">${progressPercent} %</div>
+                    </div>
+
+                    <!-- BACK TO LISTS BUTTON (Icon above text) -->
+                    <button onclick="backToLists()" class="absolute right-2 bottom-3 flex flex-col items-center gap-1 text-navyText font-bold text-xs hover:opacity-80 transition group">
+                        <i data-lucide="undo-2" class="w-6 h-6 stroke-[2.5] text-navyText group-hover:scale-110 transition-transform"></i>
+                        <span class="font-bold">Tillbaka till listorna</span>
+                    </button>
+                </div>
+            `;
+            container.innerHTML = html;
+        }
+
+        // --- INTERACTION LOGIC ---
+
+        function openTodoList(id) {
+            state.activeListId = id;
+            render();
+        }
+
+        function backToLists() {
+            state.activeListId = null;
+            render();
+        }
+
+        function toggleTask(listId, taskId) {
+            const list = state.lists.find(l => l.id === listId);
+            if (list) {
+                const task = list.tasks.find(t => t.id === taskId);
+                if (task) {
+                    task.completed = !task.completed;
+                    saveState();
+                    render();
+                }
+            }
+        }
+
+        function deleteTask(listId, taskId) {
+            const list = state.lists.find(l => l.id === listId);
+            if (list) {
+                list.tasks = list.tasks.filter(t => t.id !== taskId);
+                saveState();
+                render();
+            }
+        }
+
+        function deleteList(listId, event) {
+            event.stopPropagation();
+            state.lists = state.lists.filter(l => l.id !== listId);
+            saveState();
+            render();
+        }
+
+        // --- MODAL UTILITIES ---
+        const modalBackdrop = document.getElementById('modal-backdrop');
+        const modalTitle = document.getElementById('modal-title');
+        const modalContent = document.getElementById('modal-content');
+        const modalConfirm = document.getElementById('modal-confirm');
+        const modalCancel = document.getElementById('modal-cancel');
+
+        function showModal(title, contentHtml, onConfirm) {
+            modalTitle.textContent = title;
+            modalContent.innerHTML = contentHtml;
+            modalBackdrop.classList.remove('hidden');
+
+            const confirmHandler = () => {
+                if (onConfirm()) {
+                    hideModal();
+                }
+            };
+
+            modalConfirm.onclick = confirmHandler;
+            modalCancel.onclick = hideModal;
+        }
+
+        function hideModal() {
+            modalBackdrop.classList.add('hidden');
+        }
+
+        // --- MODAL ACTIONS ---
+
+        // Create List
+        function openCreateListModal() {
+            showModal(
+                'Skapa ny lista',
+                `
+                    <div>
+                        <label class="block text-sm font-bold text-navyText mb-1">Listans namn</label>
+                        <input type="text" id="input-list-name" class="w-full px-3 py-2 rounded-xl border border-navyText bg-white text-navyText focus:outline-none focus:ring-2 focus:ring-navyText" placeholder="t.ex. Handling, Matlagning..." autofocus>
+                    </div>
+                `,
+                () => {
+                    const input = document.getElementById('input-list-name');
+                    const name = input.value.trim();
+                    if (!name) return false;
+
+                    const newList = {
+                        id: 'l_' + Date.now(),
+                        name: name,
+                        ownerId: state.currentUser,
+                        sharedUsers: [state.currentUser],
+                        tasks: []
+                    };
+                    state.lists.push(newList);
+                    saveState();
+                    render();
+                    return true;
+                }
+            );
+        }
+
+        // Edit List Title
+        function openEditListTitleModal(listId) {
+            const list = state.lists.find(l => l.id === listId);
+            if (!list) return;
+
+            showModal(
+                'Ändra listans namn',
+                `
+                    <div>
+                        <label class="block text-sm font-bold text-navyText mb-1">Namn</label>
+                        <input type="text" id="input-list-title" value="${escapeHtml(list.name)}" class="w-full px-3 py-2 rounded-xl border border-navyText bg-white text-navyText focus:outline-none focus:ring-2 focus:ring-navyText" autofocus>
+                    </div>
+                `,
+                () => {
+                    const input = document.getElementById('input-list-title');
+                    const name = input.value.trim();
+                    if (!name) return false;
+
+                    list.name = name;
+                    saveState();
+                    render();
+                    return true;
+                }
+            );
+        }
+
+        // Create Task
+        function openCreateTaskModal(listId) {
+            const list = state.lists.find(l => l.id === listId);
+            if (!list) return;
+
+            showModal(
+                'Skapa ny uppgift',
+                `
+                    <div>
+                        <label class="block text-sm font-bold text-navyText mb-1">Uppgift</label>
+                        <input type="text" id="input-task-text" class="w-full px-3 py-2 rounded-xl border border-navyText bg-white text-navyText focus:outline-none focus:ring-2 focus:ring-navyText" placeholder="t.ex. Vattna blommorna..." autofocus>
+                    </div>
+                `,
+                () => {
+                    const input = document.getElementById('input-task-text');
+                    const text = input.value.trim();
+                    if (!text) return false;
+
+                    const newTask = {
+                        id: 't_' + Date.now(),
+                        text: text,
+                        addedBy: state.currentUser,
+                        completed: false
+                    };
+                    list.tasks.push(newTask);
+                    saveState();
+                    render();
+                    return true;
+                }
+            );
+        }
+
+        // Edit Task
+        function openEditTaskModal(listId, taskId, currentText) {
+            const list = state.lists.find(l => l.id === listId);
+            if (!list) return;
+            const task = list.tasks.find(t => t.id === taskId);
+            if (!task) return;
+
+            showModal(
+                'Ändra uppgift',
+                `
+                    <div>
+                        <label class="block text-sm font-bold text-navyText mb-1">Uppgift</label>
+                        <input type="text" id="input-edit-task-text" value="${escapeHtml(currentText)}" class="w-full px-3 py-2 rounded-xl border border-navyText bg-white text-navyText focus:outline-none focus:ring-2 focus:ring-navyText" autofocus>
+                    </div>
+                `,
+                () => {
+                    const input = document.getElementById('input-edit-task-text');
+                    const text = input.value.trim();
+                    if (!text) return false;
+
+                    task.text = text;
+                    saveState();
+                    render();
+                    return true;
+                }
+            );
+        }
+
+        // Switch Active User / Create User / Edit Username / Delete User
+        function openUserSwitchModal() {
+            const usersHtml = state.users.map(u => `
+                <div class="flex items-center justify-between p-2 rounded-xl border border-navyText ${u.id === state.currentUser ? 'bg-navyText text-white' : 'bg-white text-navyText'}">
+                    <div class="flex items-center gap-2 overflow-hidden mr-2">
+                        <span class="font-bold truncate">${escapeHtml(u.name)}</span>
+                        <button onclick="openEditUsernameModal('${u.id}', '${escapeHtml(u.name)}')" class="hover:scale-110 transition-transform ${u.id === state.currentUser ? 'text-white' : 'text-navyText'}" title="Ändra namn">
+                            <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        <button onclick="selectUser('${u.id}')" class="px-3 py-1 rounded-lg text-xs font-bold ${u.id === state.currentUser ? 'bg-white text-navyText' : 'bg-navyText text-white'}">
+                            ${u.id === state.currentUser ? 'Aktiv' : 'Välj'}
+                        </button>
+                        ${state.users.length > 1 ? `
+                            <button onclick="deleteUser('${u.id}')" class="p-1 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 transition" title="Ta bort användare">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            `).join('');
+
+            showModal(
+                'Hantera användare',
+                `
+                    <div class="space-y-4">
+                        <div class="space-y-2">
+                            <label class="block text-sm font-bold text-navyText">Befintliga användare:</label>
+                            <div class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                                ${usersHtml}
+                            </div>
+                        </div>
+                        <div class="border-t border-navyText/20 pt-3">
+                            <label class="block text-sm font-bold text-navyText mb-1">Skapa ny användare:</label>
+                            <input type="text" id="input-new-username" class="w-full px-3 py-2 rounded-xl border border-navyText bg-white text-navyText focus:outline-none focus:ring-2 focus:ring-navyText" placeholder="Användarnamn...">
+                        </div>
+                    </div>
+                `,
+                () => {
+                    const input = document.getElementById('input-new-username');
+                    const name = input.value.trim();
+                    if (name) {
+                        const newUser = {
+                            id: 'u_' + Date.now(),
+                            name: name
+                        };
+                        state.users.push(newUser);
+                        state.currentUser = newUser.id;
+                        saveState();
+                        render();
+                        return true;
+                    }
+                    return true;
+                }
+            );
+            lucide.createIcons();
+        }
+
+        function openEditUsernameModal(userId, currentName) {
+            showModal(
+                'Ändra användarnamn',
+                `
+                    <div>
+                        <label class="block text-sm font-bold text-navyText mb-1">Nytt användarnamn</label>
+                        <input type="text" id="input-edit-username" value="${escapeHtml(currentName)}" class="w-full px-3 py-2 rounded-xl border border-navyText bg-white text-navyText focus:outline-none focus:ring-2 focus:ring-navyText" autofocus>
+                    </div>
+                `,
+                () => {
+                    const input = document.getElementById('input-edit-username');
+                    const newName = input.value.trim();
+                    if (!newName) return false;
+
+                    const user = state.users.find(u => u.id === userId);
+                    if (user) {
+                        user.name = newName;
+                        saveState();
+                        render();
+                    }
+                    return true;
+                }
+            );
+        }
+
+        function deleteUser(userId) {
+            if (state.users.length <= 1) return; // Prevent deleting the last remaining user
+
+            state.users = state.users.filter(u => u.id !== userId);
+
+            // Clean up user from list sharedUsers
+            state.lists.forEach(l => {
+                l.sharedUsers = l.sharedUsers.filter(uid => uid !== userId);
+            });
+
+            // If deleted user was active, switch to first available user
+            if (state.currentUser === userId) {
+                state.currentUser = state.users[0].id;
+            }
+
+            saveState();
+            hideModal();
+            render();
+        }
+
+        function selectUser(userId) {
+            state.currentUser = userId;
+            saveState();
+            hideModal();
+            render();
+        }
+
+        // Invite / Add / Remove User from List
+        function openInviteUserModal(listId) {
+            const list = state.lists.find(l => l.id === listId);
+            if (!list) return;
+
+            // Generate shareable link
+            const baseUrl = window.location.origin + window.location.pathname;
+            const inviteUrl = `${baseUrl}?invite=${list.id}`;
+
+            const participants = (list.sharedUsers || [list.ownerId]);
+            const availableUsers = state.users.filter(u => !participants.includes(u.id));
+
+            const participantUsersHtml = participants.map(uid => {
+                const u = state.users.find(user => user.id === uid);
+                const isOwner = uid === list.ownerId;
+                const name = u ? u.name : 'Okänd';
+                return `
+                    <div class="flex items-center justify-between p-2 bg-white rounded-xl border border-navyText">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="user" class="w-4 h-4 text-navyText fill-navyText"></i>
+                            <span class="font-bold text-navyText">${escapeHtml(name)} ${isOwner ? '<span class="text-xs text-navyText/60 font-normal">(Ägare)</span>' : ''}</span>
+                        </div>
+                        ${!isOwner ? `
+                            <button onclick="removeUserFromList('${list.id}', '${uid}')" class="text-red-600 hover:text-red-800 transition p-1 text-xs font-bold flex items-center gap-1" title="Ta bort från listan">
+                                <i data-lucide="user-minus" class="w-4 h-4"></i>
+                                <span>Ta bort</span>
+                            </button>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+
+            const optionsHtml = availableUsers.length > 0 ? availableUsers.map(u => `
+                <label class="flex items-center justify-between p-2 bg-white rounded-xl border border-navyText cursor-pointer">
+                    <span class="font-bold text-navyText">${escapeHtml(u.name)}</span>
+                    <input type="checkbox" name="invite-user" value="${u.id}" class="w-4 h-4 text-navyText">
+                </label>
+            `).join('') : '<p class="text-xs text-navyText/80">Alla lokala användare är redan med i listan.</p>';
+
+            showModal(
+                'Hantera deltagare & Inbjudan',
+                `
+                    <div class="space-y-4">
+                        <!-- INVITATION LINK SECTION -->
+                        <div class="bg-white/60 p-3 rounded-2xl border border-navyText/30">
+                            <label class="block text-xs font-bold text-navyText mb-1">Dela inbjudningslänk</label>
+                            <div class="flex items-center gap-2">
+                                <input type="text" id="invite-link-input" readonly value="${inviteUrl}" class="w-full text-xs p-2 rounded-xl border border-navyText bg-white text-navyText font-mono focus:outline-none">
+                                <button onclick="copyInviteLink()" class="px-3 py-2 bg-navyText text-white text-xs font-bold rounded-xl hover:bg-navyDark transition flex items-center gap-1 shrink-0">
+                                    <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                                    <span>Kopiera</span>
+                                </button>
+                            </div>
+                            <div id="copy-feedback" class="text-[10px] text-green-700 font-bold mt-1 hidden">Länken har kopierats till urklipp!</div>
+                        </div>
+
+                        <!-- CURRENT PARTICIPANTS SECTION -->
+                        <div class="space-y-2 border-t border-navyText/20 pt-3">
+                            <label class="block text-sm font-bold text-navyText mb-1">Nuvarande deltagare:</label>
+                            <div class="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                                ${participantUsersHtml}
+                            </div>
+                        </div>
+
+                        <!-- LOCAL USER SELECTION -->
+                        <div class="space-y-2 border-t border-navyText/20 pt-3">
+                            <label class="block text-sm font-bold text-navyText mb-1">Lägg till lokal användare:</label>
+                            <div class="space-y-2 max-h-36 overflow-y-auto pr-1">
+                                ${optionsHtml}
+                            </div>
+                        </div>
+                    </div>
+                `,
+                () => {
+                    const checkboxes = document.querySelectorAll('input[name="invite-user"]:checked');
+                    checkboxes.forEach(cb => {
+                        if (!list.sharedUsers.includes(cb.value)) {
+                            list.sharedUsers.push(cb.value);
+                        }
+                    });
+                    saveState();
+                    render();
+                    return true;
+                }
+            );
+            lucide.createIcons();
+        }
+
+        function removeUserFromList(listId, userId) {
+            const list = state.lists.find(l => l.id === listId);
+            if (list) {
+                // Ensure owner cannot be removed
+                if (userId === list.ownerId) return;
+                
+                list.sharedUsers = list.sharedUsers.filter(uid => uid !== userId);
+                saveState();
+                hideModal();
+                render();
+            }
+        }
+
+        function copyInviteLink() {
+            const input = document.getElementById('invite-link-input');
+            if (input) {
+                input.select();
+                document.execCommand('copy');
+                const feedback = document.getElementById('copy-feedback');
+                if (feedback) {
+                    feedback.classList.remove('hidden');
+                    setTimeout(() => feedback.classList.add('hidden'), 2500);
+                }
+            }
+        }
+
+        // Helper to escape HTML characters
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        // Initialize App on window load
+        window.onload = function() {
+            checkInviteUrl();
+            render();
+        };
+    </script>
+</body>
+</html>
